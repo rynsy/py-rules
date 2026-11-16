@@ -19,6 +19,8 @@ def rules(source: str) -> list[str]:
         "x = 1  # noqa: S104  TODO(#3)\n",
         "x = 1  # type: ignore[arg-type]  # TODO(#4)\n",
         's = "# not a comment"\n',
+        "# ponytail: one line\n# that continues\n# for a while\nx = 1\n",
+        "def f():\n    # TODO(#7) the batch endpoint\n    # once it ships\n    return 1\n",
         'doc = """\n# inside a string\n"""\n',
     ],
 )
@@ -39,6 +41,10 @@ def test_allowed(source: str) -> None:
         ("x = 1  # pragma: no cover\n", ["RYP002@1"]),
         ("# fmt: off\nx = 1\n# fmt: on\n", ["RYP002@1", "RYP002@3"]),
         ("x = 1\n#!/bin/sh\n", ["RYP001@2"]),
+        ("# ponytail: a\n\n# after a blank line\n", ["RYP001@3"]),
+        ("def f():\n    # ponytail: a\n# outdented\n    return 1\n", ["RYP001@3"]),
+        ("x = 1  # ponytail: trailing\n# not a continuation\n", ["RYP001@2"]),
+        ("# fine\n# ponytail: a\n", ["RYP001@1"]),
     ],
 )
 def test_flagged(source: str, expected: list[str]) -> None:

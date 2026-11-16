@@ -59,7 +59,7 @@ The same evidence for every service, so a PR is reviewed by reading `verify/repo
 
 | ID | Forbids | Fix | Came from |
 |---|---|---|---|
-| RYP001 | `#` comments, except `# TODO(#<issue>)`, `# ponytail: <ceiling>` and a shebang. | Fix the root cause, or say it in a name, a type or a test; or open an issue. | 2026-11-16, carried from Rynsy.DotNet.Rules RYN0001: agents write comments to justify workarounds, and the next agent copies them (Lauren Tan, "All Code Is Slop") |
+| RYP001 | `#` comments, except `# TODO(#<issue>)`, `# ponytail: <ceiling>` (with continuation lines directly below, at the same indent) and a shebang. | Fix the root cause, or say it in a name, a type or a test; or open an issue. | 2026-11-16, carried from Rynsy.DotNet.Rules RYN0001: agents write comments to justify workarounds, and the next agent copies them (Lauren Tan, "All Code Is Slop") |
 | RYP002 | Inline suppressions (`# noqa`, `# type: ignore`, `# pragma:`, `# fmt: off/on/skip`, `# pyright:`, `# mypy:`) without `TODO(#<issue>)` on the line. | Fix the finding. A permanent, reviewed exception goes in `extend-per-file-ignores`, where review sees it. | 2026-11-16, carried from RYN0002: a silent suppression is the same escape hatch as a justifying comment |
 | TID251 (banned) | `time.sleep`, `asyncio.sleep` outside tests. | Await the event, or use the retry policy. | 2026-11-16, from RS0030 in the .NET rules: a delay hides a race |
 | TID251 (banned) | `datetime.now`, `utcnow`, `today`, `date.today`, `time.time` outside tests and `main.py` (which may also bind `0.0.0.0`, S104). | Inject a clock from the composition root; `time.monotonic` for durations. | 2026-11-16, from RS0030: time you cannot control makes tests flaky |

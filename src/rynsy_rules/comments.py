@@ -34,19 +34,26 @@ class Finding:
 def check_source(path: Path, source: str) -> Iterator[Finding]:
     lines = source.splitlines(keepends=True)
     tokens = tokenize.generate_tokens(iter(lines).__next__)
+    allowed_block: tuple[int, int] | None = None
     for token in tokens:
         if token.type != tokenize.COMMENT:
             continue
         text = token.string
         row, column = token.start
+        own_line = not token.line[:column].strip()
+        continues_block = own_line and allowed_block == (row - 1, column)
+        allowed_block = None
         if row == 1 and text.startswith("#!"):
             continue
         if SUPPRESSION.search(text):
             if not ISSUE.search(text):
                 yield Finding(path, row, column, "RYP002", SUPPRESSION_MESSAGE)
             continue
-        if not ALLOWED.match(text):
-            yield Finding(path, row, column, "RYP001", COMMENT_MESSAGE)
+        if ALLOWED.match(text) or continues_block:
+            if own_line:
+                allowed_block = (row, column)
+            continue
+        yield Finding(path, row, column, "RYP001", COMMENT_MESSAGE)
 
 
 def python_files(roots: list[Path]) -> Iterator[Path]:
