@@ -11,6 +11,11 @@ JUNIT = """<?xml version="1.0"?>
 </testsuite></testsuites>
 """
 
+SEALED = [
+    "ok readyz",
+    "ok the service cannot reach the internet",
+    "ok only the gateway is outside the sealed network",
+]
 OPS = {"startSync": "POST /v1/sync", "listItems": "GET /v1/items"}
 FEATURES: list[Feature] = [
     {"name": "Sync", "operations": ["startSync"], "provenBy": ["tests/a.py::test_a"]},
@@ -50,10 +55,15 @@ def test_a_5xx_fails_overall_and_is_shown(tmp_path: Path) -> None:
 
 
 def test_everything_green_passes(tmp_path: Path) -> None:
-    clean = fuzz_results(junit(tmp_path, '<testsuites><testcase name="GET /v1/items"/></testsuites>'))
-    text, overall = render(clean, clean, OPS, FEATURES, ["ok readyz", "ok egress blocked"])
-    assert overall
-    assert "| Smoke | pass (2/2) |" in text
+    both = fuzz_results(
+        junit(
+            tmp_path,
+            '<testsuites><testcase name="GET /v1/items"/><testcase name="POST /v1/sync"/></testsuites>',
+        )
+    )
+    text, overall = render(both, both, OPS, FEATURES, SEALED)
+    assert overall, text
+    assert "| Smoke | pass (3/3) |" in text
 
 
 def test_no_blocking_run_or_failed_smoke_is_not_a_pass(tmp_path: Path) -> None:
@@ -61,3 +71,30 @@ def test_no_blocking_run_or_failed_smoke_is_not_a_pass(tmp_path: Path) -> None:
     assert render(clean, {}, OPS, FEATURES, ["ok readyz"])[1] is False
     assert render(clean, clean, OPS, FEATURES, ["ok readyz", "FAIL egress blocked"])[1] is False
     assert render(clean, clean, OPS, FEATURES, [])[1] is False
+
+
+def test_an_operation_the_blocking_run_skipped_or_missed_is_not_a_pass(tmp_path: Path) -> None:
+    skipped = fuzz_results(
+        junit(
+            tmp_path,
+            '<testsuites><testcase name="GET /v1/items"/>'
+            '<testcase name="POST /v1/sync"><skipped/></testcase></testsuites>',
+        )
+    )
+    text, overall = render(skipped, skipped, OPS, FEATURES, SEALED)
+    assert not overall
+    assert "incomplete (1 operations not fuzzed or skipped)" in text
+    one = fuzz_results(junit(tmp_path, '<testsuites><testcase name="GET /v1/items"/></testsuites>'))
+    assert render(one, one, OPS, FEATURES, SEALED)[1] is False
+
+
+def test_a_smoke_without_the_seal_checks_is_not_a_pass(tmp_path: Path) -> None:
+    both = fuzz_results(
+        junit(
+            tmp_path,
+            '<testsuites><testcase name="GET /v1/items"/><testcase name="POST /v1/sync"/></testsuites>',
+        )
+    )
+    text, overall = render(both, both, OPS, FEATURES, ["ok readyz"])
+    assert not overall
+    assert "MISSING required check: the service cannot reach the internet" in text

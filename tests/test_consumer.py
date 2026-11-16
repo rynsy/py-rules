@@ -34,7 +34,13 @@ def stamp() -> datetime:
 @pytest.fixture
 def consumer(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     (tmp_path / "pyproject.toml").write_text(PYPROJECT, encoding="utf-8")
-    for relative in ("src/consumer/clock.py", "src/consumer/main.py", "tests/test_clock.py"):
+    for relative in (
+        "src/consumer/clock.py",
+        "src/consumer/main.py",
+        "tests/test_clock.py",
+        "src/consumer/x/main.py",
+        "src/consumer/tests/mod.py",
+    ):
         target = tmp_path / relative
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(PRODUCT, encoding="utf-8")
@@ -65,4 +71,11 @@ def test_config_is_written_at_the_root(consumer: Path) -> None:
 
 
 def test_banned_apis_fire_in_product_code_only(consumer: Path) -> None:
-    assert banned(consumer) == ["src/consumer/clock.py:9", "src/consumer/clock.py:10"]
+    assert sorted(banned(consumer)) == [
+        "src/consumer/clock.py:10",
+        "src/consumer/clock.py:9",
+        "src/consumer/tests/mod.py:10",
+        "src/consumer/tests/mod.py:9",
+        "src/consumer/x/main.py:10",
+        "src/consumer/x/main.py:9",
+    ]

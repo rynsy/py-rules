@@ -32,7 +32,7 @@ sync:
 
 lint: sync
 	uv run ruff check .
-	uv run rynsy-rules check src tests scripts
+	uv run rynsy-rules check .
 ```
 
 The config is written at the repository root because ruff resolves `per-file-ignores` globs relative to the file that declares them.
@@ -46,8 +46,8 @@ The config is written at the repository root because ruff resolves `per-file-ign
 
 The same evidence for every service, so a PR is reviewed by reading `verify/report.md`, not the diff line by line.
 
-- `rynsy-rules features [--openapi openapi/openapi.json] [--features features.json]`: every OpenAPI operation belongs to a feature, every feature names at least one proving test as a pytest node id (`tests/unit/test_x.py::test_y`), and each such test exists and is not skipped or xfail. Runs in `make check`.
-- `rynsy-rules report --junit verify/fuzz.xml --blocking-junit verify/fuzz-5xx.xml --smoke verify/smoke.txt --out verify/report.md`: the report. Exits 1 unless smoke and the blocking (no 5xx) fuzz run both pass. Advisory fuzz failures are listed but do not fail it.
+- `rynsy-rules features [--openapi openapi/openapi.json] [--features features.json]`: every OpenAPI operation has an `operationId` and belongs to a feature; every feature names at least one proving test as a pytest node id (`tests/unit/test_x.py::test_y`, in a `test_*.py` or `*_test.py` file); each such test exists, asserts something (`assert`, `pytest.raises`, an `assert*` call) and is not skipped or xfail by any route (decorator, alias, class mark, module `pytestmark`, `pytest.skip()` in the body). Parametrize ids are not checked. Runs in `make check` and CI.
+- `rynsy-rules report --junit verify/fuzz.xml --blocking-junit verify/fuzz-5xx.xml --smoke verify/smoke.txt --out verify/report.md`: the report. Exits 1 unless every smoke check passed, the two seal checks are among them (`the service cannot reach the internet`, `only the gateway is outside the sealed network`; add more with `--require-smoke`), and the blocking (no 5xx) fuzz run passed every OpenAPI operation (a skipped or missing operation is not a pass). Advisory fuzz failures are listed but do not fail it.
 
 `features.json`:
 
@@ -59,10 +59,12 @@ The same evidence for every service, so a PR is reviewed by reading `verify/repo
 
 | ID | Forbids | Fix | Came from |
 |---|---|---|---|
-| RYP001 | `#` comments, except `# TODO(#<issue>)`, `# ponytail: <ceiling>` (with continuation lines directly below, at the same indent) and a shebang. | Fix the root cause, or say it in a name, a type or a test; or open an issue. | 2026-11-16, carried from Rynsy.DotNet.Rules RYN0001: agents write comments to justify workarounds, and the next agent copies them (Lauren Tan, "All Code Is Slop") |
-| RYP002 | Inline suppressions (`# noqa`, `# type: ignore`, `# pragma:`, `# fmt: off/on/skip`, `# pyright:`, `# mypy:`) without `TODO(#<issue>)` on the line. | Fix the finding. A permanent, reviewed exception goes in `extend-per-file-ignores`, where review sees it. | 2026-11-16, carried from RYN0002: a silent suppression is the same escape hatch as a justifying comment |
-| TID251 (banned) | `time.sleep`, `asyncio.sleep` outside tests. | Await the event, or use the retry policy. | 2026-11-16, from RS0030 in the .NET rules: a delay hides a race |
-| TID251 (banned) | `datetime.now`, `utcnow`, `today`, `date.today`, `time.time` outside tests and `main.py` (which may also bind `0.0.0.0`, S104). | Inject a clock from the composition root; `time.monotonic` for durations. | 2026-11-16, from RS0030: time you cannot control makes tests flaky |
+| RYP001 | `#` comments, except `# TODO(#<issue>)` (issue ≥ 1), `# ponytail: <ceiling>` (at most two continuation lines directly below, at the same indent) and a shebang. | Fix the root cause, or say it in a name, a type or a test; or open an issue. | 2026-11-16, carried from Rynsy.DotNet.Rules RYN0001: agents write comments to justify workarounds, and the next agent copies them (Lauren Tan, "All Code Is Slop") |
+| RYP002 | Inline suppressions in any case (`# noqa`, `# type: ignore`, `# pragma:`, `# fmt: off/on/skip`, `# pyright:`, `# mypy:`, `# ruff:`) without `TODO(#<issue>)` on the line. | Fix the finding. A permanent, reviewed exception goes in `extend-per-file-ignores`, where review sees it. | 2026-11-16, carried from RYN0002: a silent suppression is the same escape hatch as a justifying comment |
+| RYP003 | A bare string statement anywhere but a module, class or function docstring position. | Delete it, or make it a docstring. | 2026-11-16, review: a string literal is a comment the comment rule could not see |
+| RYP004 | A pyproject `[tool.ruff]` ignore or per-file-ignore that exempts `TID251`. | Move the clock or the wait to the composition root; or change the ban here. | 2026-11-16, review: any repo could switch the bans off for `src/**` |
+| TID251 (banned) | `time.sleep`, `asyncio.sleep` outside `tests/` and `src/<pkg>/main.py`. | Await the event, or use the retry policy. | 2026-11-16, from RS0030 in the .NET rules: a delay hides a race |
+| TID251 (banned) | `datetime.now`, `utcnow`, `today`, `date.today`, `time.time`, `time.time_ns`, `time.localtime` outside `tests/` and `src/<pkg>/main.py` (which may also bind `0.0.0.0`, S104). `rynsy-rules config` writes the exact `src/<pkg>/main.py` paths: ruff's `*` crosses `/`, so a pattern would also exempt any nested `main.py`. | Inject a clock from the composition root; `time.monotonic` for durations. | 2026-11-16, from RS0030: time you cannot control makes tests flaky |
 | ERA001 (off) | — | RYP001 already rejects commented-out code. | 2026-11-16 |
 
 ## Adding a rule

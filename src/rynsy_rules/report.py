@@ -4,6 +4,7 @@ from pathlib import Path
 from rynsy_rules.features import Feature
 
 FuzzResults = dict[str, tuple[str, list[str]]]
+REQUIRED_SMOKE = ("the service cannot reach the internet", "only the gateway is outside the sealed network")
 
 
 def fuzz_results(junit: Path) -> FuzzResults:
@@ -42,17 +43,23 @@ def render(
     ops: dict[str, str],
     features: list[Feature],
     smoke_lines: list[str],
+    *,
+    required_smoke: tuple[str, ...] = REQUIRED_SMOKE,
 ) -> tuple[str, bool]:
     smoke_ok = sum(1 for line in smoke_lines if line.startswith("ok "))
-    smoke_pass = bool(smoke_lines) and smoke_ok == len(smoke_lines)
+    missing_smoke = [check for check in required_smoke if f"ok {check}" not in smoke_lines]
+    smoke_pass = bool(smoke_lines) and smoke_ok == len(smoke_lines) and not missing_smoke
     blocking_failures = {name: texts for name, (status, texts) in blocking.items() if status == "fail"}
-    blocking_pass = bool(blocking) and not blocking_failures
+    unfuzzed = sorted(op for op in ops.values() if blocking.get(op, ("not run", []))[0] != "pass")
+    blocking_pass = bool(blocking) and not blocking_failures and not unfuzzed
     advisory = {name: texts for name, (status, texts) in fuzz.items() if status == "fail"}
     overall = smoke_pass and blocking_pass
     if not blocking:
         blocking_text = "not run"
     elif blocking_failures:
         blocking_text = f"fail ({len(blocking_failures)})"
+    elif unfuzzed:
+        blocking_text = f"incomplete ({len(unfuzzed)} operations not fuzzed or skipped)"
     else:
         blocking_text = "pass"
     lines = [
@@ -76,6 +83,9 @@ def render(
         status = feature_status(fuzz, ops, feature)
         lines.append(f"| {feature['name']} | {', '.join(feature['operations'])} | {status} | {proven} |")
     lines += ["", "## Smoke", "", *[f"- {line}" for line in smoke_lines]]
+    lines += [f"- MISSING required check: {check}" for check in missing_smoke]
+    if unfuzzed:
+        lines += ["", "## Operations the blocking run did not pass", "", *[f"- {op}" for op in unfuzzed]]
     if blocking_failures:
         lines += _section("Blocking failures (5xx)", blocking_failures)
     if advisory:

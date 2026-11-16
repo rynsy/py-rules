@@ -15,9 +15,9 @@ ignore = [
 ]
 
 [lint.per-file-ignores]
-"**/tests/**" = ["S101", "ANN", "PLR2004", "ARG", "SLF001", "S105", "S106", "INP001", "TID251"]
-"**/scripts/**" = ["T201", "INP001"]
-"**/main.py" = ["TID251", "S104"]
+"tests/**" = ["S101", "FBT001", "ANN", "PLR2004", "ARG", "SLF001", "S105", "S106", "INP001", "TID251"]
+"scripts/**" = ["T201", "INP001"]
+"src/*/main.py" = ["TID251", "S104"]
 
 [lint.flake8-tidy-imports.banned-api]
 "time.sleep".msg = "A sleep hides a race. Await the event, or use the retry policy. Tests may sleep."
@@ -27,3 +27,5 @@ ignore = [
 "datetime.datetime.today".msg = "Inject a clock (a `Callable[[], datetime]`) from main.py, the composition root."
 "datetime.date.today".msg = "Inject a clock (a `Callable[[], datetime]`) from main.py, the composition root."
 "time.time".msg = "Inject a clock from main.py; for durations use `time.monotonic`."
+"time.time_ns".msg = "Inject a clock from main.py; for durations use `time.monotonic_ns`."
+"time.localtime".msg = "Inject a clock from main.py, the composition root."

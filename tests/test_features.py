@@ -7,24 +7,63 @@ from rynsy_rules.features import problems
 
 TESTS = """
 import pytest
+from pytest import mark
+
+skip_it = pytest.mark.skip
 
 def test_round_trip():
-    pass
+    assert 1 + 1 == 2
 
 @pytest.mark.skip(reason="later")
 def test_skipped():
+    assert True
+
+@mark.xfail
+def test_xfail():
+    assert True
+
+@skip_it
+def test_alias_skipped():
+    assert True
+
+def test_skips_inside():
+    pytest.skip("later")
+    assert True
+
+def test_proves_nothing():
     pass
+
+def test_raises():
+    with pytest.raises(ValueError):
+        int("x")
+
+def test_helper_assert(mock):
+    mock.assert_called_once()
 
 @pytest.mark.parametrize("x", [1])
 def test_param(x):
-    pass
+    assert x
 
 class TestGroup:
     async def test_member(self):
-        pass
+        assert self
+
+@pytest.mark.skip
+class TestSkipped:
+    def test_inside(self):
+        assert self
 
 def helper():
-    pass
+    assert True
+"""
+
+SKIPPED_MODULE = """
+import pytest
+
+pytestmark = pytest.mark.skip
+
+def test_anything():
+    assert True
 """
 
 
@@ -32,9 +71,11 @@ def helper():
 def repo(tmp_path: Path) -> Path:
     (tmp_path / "tests").mkdir()
     (tmp_path / "tests" / "test_api.py").write_text(TESTS, encoding="utf-8")
+    (tmp_path / "tests" / "test_off.py").write_text(SKIPPED_MODULE, encoding="utf-8")
+    (tmp_path / "tests" / "helpers.py").write_text("def test_helper():\n    assert True\n", encoding="utf-8")
     openapi = {
         "paths": {
-            "/v1/sync": {"post": {"operationId": "startSync"}, "parameters": []},
+            "/v1/sync": {"post": {"operationId": "startSync"}, "parameters": [], "summary": "s"},
             "/v1/items": {"get": {"operationId": "listItems"}},
         }
     }
@@ -56,6 +97,8 @@ def test_a_complete_map_has_no_problems(repo: Path) -> None:
         "tests/test_api.py::test_round_trip",
         "tests/test_api.py::test_param[1]",
         "tests/test_api.py::TestGroup::test_member",
+        "tests/test_api.py::test_raises",
+        "tests/test_api.py::test_helper_assert",
     ]
     assert run(repo, [feature(["startSync", "listItems"], proofs)]) == []
 
@@ -77,6 +120,13 @@ def test_a_complete_map_has_no_problems(repo: Path) -> None:
         (["startSync", "listItems"], ["tests/test_api.py::helper"], "no such test function"),
         (["startSync", "listItems"], ["tests/test_api.py::test_missing"], "no such test function"),
         (["startSync", "listItems"], ["tests/test_api.py::test_skipped"], "skipped or xfail"),
+        (["startSync", "listItems"], ["tests/test_api.py::test_xfail"], "skipped or xfail"),
+        (["startSync", "listItems"], ["tests/test_api.py::test_alias_skipped"], "skipped or xfail"),
+        (["startSync", "listItems"], ["tests/test_api.py::test_skips_inside"], "skipped or xfail"),
+        (["startSync", "listItems"], ["tests/test_api.py::TestSkipped::test_inside"], "skipped or xfail"),
+        (["startSync", "listItems"], ["tests/test_off.py::test_anything"], "skipped or xfail"),
+        (["startSync", "listItems"], ["tests/test_api.py::test_proves_nothing"], "asserts nothing"),
+        (["startSync", "listItems"], ["tests/helpers.py::test_helper"], "not a pytest node id"),
         (["startSync", "listItems"], ["tests/test_nope.py::test_round_trip"], "not a pytest node id"),
         (["startSync", "listItems"], ["test_round_trip"], "not a pytest node id"),
     ],
@@ -85,3 +135,10 @@ def test_each_gap_is_reported(repo: Path, operations: list[str], proofs: list[st
     found = run(repo, [feature(operations, proofs)])
     assert len(found) == 1
     assert expected in found[0]
+
+
+def test_an_operation_without_an_id_is_reported(repo: Path) -> None:
+    openapi = {"paths": {"/v1/x": {"get": {"summary": "no id"}}}}
+    (repo / "openapi.json").write_text(json.dumps(openapi), encoding="utf-8")
+    found = run(repo, [])
+    assert found == ["operation GET /v1/x has no operationId, so no feature can claim it"]
