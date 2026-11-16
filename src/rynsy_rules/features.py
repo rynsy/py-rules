@@ -18,22 +18,24 @@ def load_features(path: Path) -> list[Feature]:
 
 
 def operations(openapi: Path) -> tuple[dict[str, str], list[str]]:
+    """Map operationId to "METHOD /path"; list operations with no id and ids used twice."""
     doc = json.loads(openapi.read_text(encoding="utf-8"))
     named: dict[str, str] = {}
-    unnamed: list[str] = []
+    wrong: list[str] = []
     for route, ops in doc["paths"].items():
         for method, op in ops.items():
             if method not in HTTP_METHODS:
                 continue
-            if "operationId" in op:
-                named[op["operationId"]] = f"{method.upper()} {route}"
+            label = f"{method.upper()} {route}"
+            op_id = op.get("operationId")
+            if op_id is None:
+                wrong.append(f"operation {label} has no operationId, so no feature can claim it")
+            elif op_id in named:
+                first, second = sorted((named[op_id], label))
+                wrong.append(f"operationId {op_id} is used by both {first} and {second}")
             else:
-                unnamed.append(f"{method.upper()} {route}")
-    return named, unnamed
-
-
-def operation_ids(openapi: Path) -> dict[str, str]:
-    return operations(openapi)[0]
+                named[op_id] = label
+    return named, sorted(wrong)
 
 
 HTTP_METHODS = frozenset({"get", "put", "post", "delete", "options", "head", "patch", "trace"})
@@ -123,9 +125,8 @@ def proof_problem(root: Path, node_id: str) -> str | None:
 
 
 def problems(root: Path, openapi: Path, features_path: Path) -> Iterator[str]:
-    ops, unnamed = operations(openapi)
-    for operation in unnamed:
-        yield f"operation {operation} has no operationId, so no feature can claim it"
+    ops, wrong = operations(openapi)
+    yield from wrong
     features = load_features(features_path)
     covered = {op for feature in features for op in feature["operations"]}
     for op in sorted(set(ops) - covered):

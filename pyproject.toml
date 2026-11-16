@@ -1,6 +1,6 @@
 [project]
 name = "rynsy-py-rules"
-version = "0.3.1"
+version = "0.4.0"
 description = "Shared Python lint rules: corrections become deterministic checks"
 requires-python = ">=3.13"
 dependencies = []

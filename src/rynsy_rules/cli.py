@@ -26,13 +26,18 @@ def write_config() -> None:
 
 def write_report(args: argparse.Namespace) -> int:
     smoke = args.smoke.read_text(encoding="utf-8").splitlines() if args.smoke.exists() else []
+    ops, spec_problems = features.operations(args.openapi)
     text, overall = report.render(
         report.fuzz_results(args.junit),
         report.fuzz_results(args.blocking_junit),
-        features.operation_ids(args.openapi),
+        ops,
         features.load_features(args.features),
         [line for line in smoke if line.strip()],
         required_smoke=tuple(args.require_smoke),
+        setup_problems=(
+            *spec_problems,
+            *report.config_problems(args.schemathesis_config, ops),
+        ),
     )
     args.out.write_text(text, encoding="utf-8")
     sys.stdout.write(text)
@@ -63,6 +68,12 @@ def main(argv: list[str] | None = None) -> int:
         help="a smoke check that must be present and ok (repeatable; the seal checks are always required)",
     )
     verify.add_argument("--features", type=Path, default=Path("features.json"))
+    verify.add_argument(
+        "--schemathesis-config",
+        type=Path,
+        default=Path("schemathesis.toml"),
+        help="checked, not applied: it may only let named operations answer 502-504",
+    )
     args = parser.parse_args(argv)
 
     if args.command == "config":
