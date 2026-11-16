@@ -1,3 +1,4 @@
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -88,3 +89,12 @@ def test_a_repo_cannot_exempt_itself_from_the_bans(tmp_path: Path, ruff: str, fl
     pyproject = tmp_path / "pyproject.toml"
     pyproject.write_text(ruff, encoding="utf-8")
     assert [f.rule for f in check_pyproject(pyproject)] == (["RYP004"] if flagged else [])
+
+
+def test_inside_a_git_repo_ignored_files_are_skipped(tmp_path: Path) -> None:
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    (tmp_path / ".gitignore").write_text("mutants/\n", encoding="utf-8")
+    (tmp_path / "mutants").mkdir()
+    (tmp_path / "mutants" / "copy.py").write_text("# generated\n", encoding="utf-8")
+    (tmp_path / "mine.py").write_text("# mine\n", encoding="utf-8")
+    assert [f.path.name for f in check_paths([tmp_path])] == ["mine.py"]

@@ -1,5 +1,7 @@
 import ast
 import re
+import shutil
+import subprocess
 import tokenize
 import tomllib
 from collections.abc import Iterator
@@ -97,10 +99,31 @@ def check_source(path: Path, source: str) -> Iterator[Finding]:
     yield from _string_findings(path, source)
 
 
+def _git_listed(root: Path) -> list[Path] | None:
+    git = shutil.which("git")
+    if git is None:
+        return None
+    listed = subprocess.run(
+        [git, "ls-files", "--cached", "--others", "--exclude-standard", "-z", "--", "*.py", "*.pyi"],
+        cwd=root,
+        capture_output=True,
+        check=False,
+    )
+    if listed.returncode != 0:
+        return None
+    return sorted(
+        root / name for name in listed.stdout.decode().split("\0") if name and (root / name).is_file()
+    )
+
+
 def python_files(roots: list[Path]) -> Iterator[Path]:
     for root in roots:
         if root.is_file():
             yield root
+            continue
+        listed = _git_listed(root)
+        if listed is not None:
+            yield from listed
             continue
         for path in sorted(p for pattern in ("*.py", "*.pyi") for p in root.rglob(pattern)):
             if not SKIP_DIRS.intersection(path.relative_to(root).parts[:-1]):
