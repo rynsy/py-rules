@@ -1,7 +1,9 @@
 from pathlib import Path
 
+import pytest
+
 from rynsy_rules.features import Feature
-from rynsy_rules.report import fuzz_results, render
+from rynsy_rules.report import config_problems, fuzz_results, render
 
 JUNIT = """<?xml version="1.0"?>
 <testsuites><testsuite>
@@ -98,3 +100,55 @@ def test_a_smoke_without_the_seal_checks_is_not_a_pass(tmp_path: Path) -> None:
     text, overall = render(both, both, OPS, FEATURES, ["ok readyz"])
     assert not overall
     assert "MISSING required check: the service cannot reach the internet" in text
+
+
+GREEN = '<testsuites><testcase name="GET /v1/items"/><testcase name="POST /v1/sync"/></testsuites>'
+
+
+def test_a_setup_problem_fails_an_otherwise_green_run(tmp_path: Path) -> None:
+    both = fuzz_results(junit(tmp_path, GREEN))
+    text, overall = render(
+        both, both, OPS, FEATURES, SEALED, setup_problems=("operationId op is used twice",)
+    )
+    assert not overall
+    assert "| Spec and fuzz config | fail (1) |" in text
+    assert "- operationId op is used twice" in text
+
+
+def config(tmp_path: Path, text: str) -> list[str]:
+    path = tmp_path / "schemathesis.toml"
+    path.write_text(text, encoding="utf-8")
+    return config_problems(path, OPS)
+
+
+ALLOWANCE = """
+[[operations]]
+include-operation-id = ["startSync"]
+checks.not_a_server_error.expected-statuses = ["2xx", "3xx", "4xx", "502"]
+"""
+
+
+def test_a_named_502_allowance_is_fine(tmp_path: Path) -> None:
+    assert config(tmp_path, ALLOWANCE) == []
+    assert config_problems(tmp_path / "absent.toml", OPS) == []
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ('base-url = "http://127.0.0.1:9"\n', "found base-url"),
+        ("[checks]\nnot_a_server_error.expected-statuses = ['5xx']\n", "found checks"),
+        (ALLOWANCE.replace('"502"', '"5xx"'), "may not include 5xx"),
+        (ALLOWANCE.replace('"502"', '"500"'), "may not include 500"),
+        (ALLOWANCE.replace("startSync", "nope"), "nope is not an operationId"),
+        (
+            ALLOWANCE.replace('include-operation-id = ["startSync"]', 'include-path = "/v1/sync"'),
+            "may only hold",
+        ),
+        (ALLOWANCE + "checks.not_a_server_error.enabled = false\n", "may only hold"),
+        (ALLOWANCE.replace("not_a_server_error", "status_code_conformance"), "may only hold"),
+    ],
+)
+def test_a_wider_config_is_a_problem(tmp_path: Path, text: str, expected: str) -> None:
+    found = config(tmp_path, text)
+    assert any(expected in p for p in found), found

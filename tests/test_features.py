@@ -142,3 +142,10 @@ def test_an_operation_without_an_id_is_reported(repo: Path) -> None:
     (repo / "openapi.json").write_text(json.dumps(openapi), encoding="utf-8")
     found = run(repo, [])
     assert found == ["operation GET /v1/x has no operationId, so no feature can claim it"]
+
+
+def test_a_duplicate_operation_id_is_reported(repo: Path) -> None:
+    openapi = {"paths": {"/a": {"get": {"operationId": "op"}}, "/b": {"post": {"operationId": "op"}}}}
+    (repo / "openapi.json").write_text(json.dumps(openapi), encoding="utf-8")
+    found = run(repo, [feature(["op"], ["tests/test_api.py::test_round_trip"])])
+    assert found == ["operationId op is used by both GET /a and POST /b"]

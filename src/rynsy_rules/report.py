@@ -1,3 +1,4 @@
+import tomllib
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
@@ -5,6 +6,49 @@ from rynsy_rules.features import Feature
 
 FuzzResults = dict[str, tuple[str, list[str]]]
 REQUIRED_SMOKE = ("the service cannot reach the internet", "only the gateway is outside the sealed network")
+
+
+ALLOWED_STATUSES = frozenset({"2xx", "3xx", "4xx", "502", "503", "504"})
+CONFIG_RULE = (
+    "schemathesis.toml may only hold [[operations]] tables that name operations "
+    "(include-operation-id) and let them answer 502, 503 or 504 "
+    "(checks.not_a_server_error.expected-statuses); "
+    "the base URL and every other check stay on the command line"
+)
+
+
+def _operation_table_problems(index: int, table: object, ops: dict[str, str]) -> list[str]:
+    if not isinstance(table, dict) or set(table) != {"include-operation-id", "checks"}:
+        return [f"[[operations]] #{index}: {CONFIG_RULE}"]
+    names = table["include-operation-id"]
+    if not isinstance(names, list) or not names:
+        return [f"[[operations]] #{index}: include-operation-id must be a list of operationIds"]
+    problems = [f"[[operations]] #{index}: {name} is not an operationId" for name in names if name not in ops]
+    checks = table["checks"]
+    statuses = (
+        checks.get("not_a_server_error", {})
+        if isinstance(checks, dict) and set(checks) == {"not_a_server_error"}
+        else None
+    )
+    if not isinstance(statuses, dict) or set(statuses) != {"expected-statuses"}:
+        return [*problems, f"[[operations]] #{index}: {CONFIG_RULE}"]
+    widened = sorted(set(map(str, statuses["expected-statuses"])) - ALLOWED_STATUSES)
+    if widened:
+        problems.append(f"[[operations]] #{index}: expected-statuses may not include {', '.join(widened)}")
+    return problems
+
+
+def config_problems(config: Path, ops: dict[str, str]) -> list[str]:
+    """What is wrong with a repo's schemathesis.toml; a missing file is fine."""
+    if not config.exists():
+        return []
+    doc = tomllib.loads(config.read_text(encoding="utf-8"))
+    if set(doc) - {"operations"}:
+        return [f"{config}: {CONFIG_RULE} (found {', '.join(sorted(set(doc) - {'operations'}))})"]
+    tables = doc.get("operations", [])
+    if not isinstance(tables, list):
+        return [f"{config}: {CONFIG_RULE}"]
+    return [f"{config}: {p}" for i, t in enumerate(tables, 1) for p in _operation_table_problems(i, t, ops)]
 
 
 def fuzz_results(junit: Path) -> FuzzResults:
@@ -45,6 +89,7 @@ def render(
     smoke_lines: list[str],
     *,
     required_smoke: tuple[str, ...] = REQUIRED_SMOKE,
+    setup_problems: tuple[str, ...] = (),
 ) -> tuple[str, bool]:
     smoke_ok = sum(1 for line in smoke_lines if line.startswith("ok "))
     missing_smoke = [check for check in required_smoke if f"ok {check}" not in smoke_lines]
@@ -53,7 +98,7 @@ def render(
     unfuzzed = sorted(op for op in ops.values() if blocking.get(op, ("not run", []))[0] != "pass")
     blocking_pass = bool(blocking) and not blocking_failures and not unfuzzed
     advisory = {name: texts for name, (status, texts) in fuzz.items() if status == "fail"}
-    overall = smoke_pass and blocking_pass
+    overall = smoke_pass and blocking_pass and not setup_problems
     if not blocking:
         blocking_text = "not run"
     elif blocking_failures:
@@ -72,6 +117,7 @@ def render(
         f"| Blocking 5xx | {blocking_text} |",
         f"| Fuzz operations | {len(fuzz)} |",
         f"| Advisory fuzz failures | {len(advisory)} |",
+        f"| Spec and fuzz config | {f'fail ({len(setup_problems)})' if setup_problems else 'pass'} |",
         "",
         "## Features",
         "",
@@ -82,6 +128,8 @@ def render(
         proven = "<br>".join(feature["provenBy"])
         status = feature_status(fuzz, ops, feature)
         lines.append(f"| {feature['name']} | {', '.join(feature['operations'])} | {status} | {proven} |")
+    if setup_problems:
+        lines += ["", "## Spec and fuzz config problems", "", *[f"- {p}" for p in setup_problems]]
     lines += ["", "## Smoke", "", *[f"- {line}" for line in smoke_lines]]
     lines += [f"- MISSING required check: {check}" for check in missing_smoke]
     if unfuzzed:
