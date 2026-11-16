@@ -1,5 +1,6 @@
 import ast
 import json
+import re
 from collections.abc import Iterator
 from pathlib import Path
 from typing import TypedDict
@@ -16,57 +17,115 @@ def load_features(path: Path) -> list[Feature]:
     return features
 
 
-def operation_ids(openapi: Path) -> dict[str, str]:
+def operations(openapi: Path) -> tuple[dict[str, str], list[str]]:
     doc = json.loads(openapi.read_text(encoding="utf-8"))
-    return {
-        op["operationId"]: f"{method.upper()} {route}"
-        for route, ops in doc["paths"].items()
-        for method, op in ops.items()
-        if isinstance(op, dict) and "operationId" in op
-    }
+    named: dict[str, str] = {}
+    unnamed: list[str] = []
+    for route, ops in doc["paths"].items():
+        for method, op in ops.items():
+            if method not in HTTP_METHODS:
+                continue
+            if "operationId" in op:
+                named[op["operationId"]] = f"{method.upper()} {route}"
+            else:
+                unnamed.append(f"{method.upper()} {route}")
+    return named, unnamed
 
 
-def _is_skipped(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+def operation_ids(openapi: Path) -> dict[str, str]:
+    return operations(openapi)[0]
+
+
+HTTP_METHODS = frozenset({"get", "put", "post", "delete", "options", "head", "patch", "trace"})
+SKIPPING = re.compile(r"\b(skip|skipif|xfail|importorskip)\b")
+TEST_FILE = re.compile(r"(^|/)(test_[^/]*|[^/]*_test)\.py$")
+
+
+def _skipping_aliases(tree: ast.Module) -> set[str]:
+    aliases: set[str] = set()
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and SKIPPING.search(ast.unparse(node.value)):
+            aliases.update(t.id for t in node.targets if isinstance(t, ast.Name))
+    return aliases
+
+
+def _skips(node: ast.AST, aliases: set[str]) -> bool:
+    if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
+        return False
     for decorator in node.decorator_list:
-        target = decorator.func if isinstance(decorator, ast.Call) else decorator
-        if isinstance(target, ast.Attribute) and target.attr in {"skip", "skipif", "xfail"}:
+        root = decorator.func if isinstance(decorator, ast.Call) else decorator
+        if SKIPPING.search(ast.unparse(decorator)) or (isinstance(root, ast.Name) and root.id in aliases):
             return True
     return False
 
 
-def _is_test(node: ast.stmt) -> bool:
-    return isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) and node.name.startswith("test")
+def _body_skips(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+    return any(
+        isinstance(inner, ast.Call) and SKIPPING.search(ast.unparse(inner.func)) for inner in ast.walk(node)
+    )
 
 
-def _tests_in(path: Path) -> dict[str, bool]:
+def _asserts(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+    for inner in ast.walk(node):
+        if isinstance(inner, ast.Assert):
+            return True
+        if isinstance(inner, ast.Call):
+            name = ast.unparse(inner.func).rsplit(".", 1)[-1]
+            if name.startswith("assert") or name == "raises":
+                return True
+    return False
+
+
+def _verdict(node: ast.FunctionDef | ast.AsyncFunctionDef, *, skipped: bool, aliases: set[str]) -> str | None:
+    if skipped or _skips(node, aliases) or _body_skips(node):
+        return "the test is skipped or xfail, so it proves nothing"
+    if not _asserts(node):
+        return "the test asserts nothing, so it proves nothing"
+    return None
+
+
+def _tests_in(path: Path) -> dict[str, str | None]:
     tree = ast.parse(path.read_text(encoding="utf-8"))
-    found: dict[str, bool] = {}
+    aliases = _skipping_aliases(tree)
+    module_skipped = any(
+        isinstance(node, ast.Assign)
+        and any(isinstance(t, ast.Name) and t.id == "pytestmark" for t in node.targets)
+        and SKIPPING.search(ast.unparse(node.value))
+        for node in tree.body
+    )
+    found: dict[str, str | None] = {}
     for node in tree.body:
-        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) and _is_test(node):
-            found[node.name] = _is_skipped(node)
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) and node.name.startswith("test"):
+            found[node.name] = _verdict(node, skipped=module_skipped, aliases=aliases)
         if isinstance(node, ast.ClassDef) and node.name.startswith("Test"):
+            class_skipped = module_skipped or _skips(node, aliases)
             for member in node.body:
-                if isinstance(member, ast.FunctionDef | ast.AsyncFunctionDef) and _is_test(member):
-                    found[f"{node.name}::{member.name}"] = _is_skipped(member)
+                if isinstance(member, ast.FunctionDef | ast.AsyncFunctionDef) and member.name.startswith(
+                    "test"
+                ):
+                    found[f"{node.name}::{member.name}"] = _verdict(
+                        member, skipped=class_skipped, aliases=aliases
+                    )
     return found
 
 
 def proof_problem(root: Path, node_id: str) -> str | None:
     file_part, _, name = node_id.partition("::")
     path = root / file_part
-    if not name or not file_part.endswith(".py") or not path.is_file():
-        return f"{node_id}: not a pytest node id of an existing file (tests/x/test_y.py::test_name)"
+    if not name or not TEST_FILE.search(file_part) or not path.is_file():
+        return f"{node_id}: not a pytest node id of an existing test file (tests/x/test_y.py::test_name)"
     tests = _tests_in(path)
     key = name.split("[", 1)[0]
     if key not in tests:
         return f"{node_id}: no such test function"
-    if tests[key]:
-        return f"{node_id}: the test is skipped or xfail, so it proves nothing"
-    return None
+    verdict = tests[key]
+    return f"{node_id}: {verdict}" if verdict else None
 
 
 def problems(root: Path, openapi: Path, features_path: Path) -> Iterator[str]:
-    ops = operation_ids(openapi)
+    ops, unnamed = operations(openapi)
+    for operation in unnamed:
+        yield f"operation {operation} has no operationId, so no feature can claim it"
     features = load_features(features_path)
     covered = {op for feature in features for op in feature["operations"]}
     for op in sorted(set(ops) - covered):

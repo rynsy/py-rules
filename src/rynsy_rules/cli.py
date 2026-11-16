@@ -4,15 +4,24 @@ from importlib.resources import files
 from pathlib import Path
 
 from rynsy_rules import features, report
-from rynsy_rules.comments import check_paths
+from rynsy_rules.comments import check_paths, check_pyproject
 
 CONFIG = Path(".ruff-rynsy.toml")
 
 
+COMPOSITION_ROOT = '"src/*/main.py"'
+
+
 def write_config() -> None:
-    CONFIG.write_text(
-        files("rynsy_rules").joinpath("base-ruff.toml").read_text(encoding="utf-8"), encoding="utf-8"
-    )
+    base = files("rynsy_rules").joinpath("base-ruff.toml").read_text(encoding="utf-8")
+    lines: list[str] = []
+    for line in base.splitlines():
+        if line.startswith(COMPOSITION_ROOT):
+            rest = line.removeprefix(COMPOSITION_ROOT)
+            lines += [f'"{root.as_posix()}"{rest}' for root in sorted(Path("src").glob("*/main.py"))]
+        else:
+            lines.append(line)
+    CONFIG.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def write_report(args: argparse.Namespace) -> int:
@@ -23,6 +32,7 @@ def write_report(args: argparse.Namespace) -> int:
         features.operation_ids(args.openapi),
         features.load_features(args.features),
         [line for line in smoke if line.strip()],
+        required_smoke=tuple(args.require_smoke),
     )
     args.out.write_text(text, encoding="utf-8")
     sys.stdout.write(text)
@@ -46,6 +56,12 @@ def main(argv: list[str] | None = None) -> int:
     for flag in ("--junit", "--blocking-junit", "--smoke", "--out"):
         verify.add_argument(flag, type=Path, required=True)
     verify.add_argument("--openapi", type=Path, default=Path("openapi/openapi.json"))
+    verify.add_argument(
+        "--require-smoke",
+        action="append",
+        default=list(report.REQUIRED_SMOKE),
+        help="a smoke check that must be present and ok (repeatable; the seal checks are always required)",
+    )
     verify.add_argument("--features", type=Path, default=Path("features.json"))
     args = parser.parse_args(argv)
 
@@ -58,7 +74,14 @@ def main(argv: list[str] | None = None) -> int:
         return 1 if found else 0
     if args.command == "report":
         return write_report(args)
-    findings = check_paths([p for p in args.paths if p.exists()])
+    missing = [p for p in args.paths if not p.exists()]
+    if missing:
+        sys.stdout.writelines(f"{p}: no such file or directory\n" for p in missing)
+        return 2
+    findings = check_paths(args.paths)
+    pyproject = Path("pyproject.toml")
+    if pyproject.is_file():
+        findings.extend(check_pyproject(pyproject))
     for finding in findings:
         sys.stdout.write(f"{finding}\n")
     return 1 if findings else 0

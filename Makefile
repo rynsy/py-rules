@@ -12,7 +12,7 @@ format: sync
 
 lint: sync
 	uv run ruff check .
-	uv run rynsy-rules check src tests
+	uv run rynsy-rules check .
 
 types: sync
 	uv run mypy
