@@ -17,7 +17,7 @@ CONFIG_RULE = (
 )
 
 
-def _operation_table_problems(index: int, table: object, ops: dict[str, str]) -> list[str]:
+def _operation_table_problems(index: int, table: object, ops: dict[str, set[str]]) -> list[str]:
     if not isinstance(table, dict) or set(table) != {"include-operation-id", "checks"}:
         return [f"[[operations]] #{index}: {CONFIG_RULE}"]
     names = table["include-operation-id"]
@@ -32,13 +32,23 @@ def _operation_table_problems(index: int, table: object, ops: dict[str, str]) ->
     )
     if not isinstance(statuses, dict) or set(statuses) != {"expected-statuses"}:
         return [*problems, f"[[operations]] #{index}: {CONFIG_RULE}"]
-    widened = sorted(set(map(str, statuses["expected-statuses"])) - ALLOWED_STATUSES)
+    allowed = set(map(str, statuses["expected-statuses"]))
+    widened = sorted(allowed - ALLOWED_STATUSES)
     if widened:
         problems.append(f"[[operations]] #{index}: expected-statuses may not include {', '.join(widened)}")
+    for name in names:
+        undeclared = sorted(
+            code for code in allowed - {"2xx", "3xx", "4xx"} if code not in ops.get(name, set())
+        )
+        if name in ops and undeclared:
+            problems.append(
+                f"[[operations]] #{index}: {name} does not declare {', '.join(undeclared)} in openapi.json; "
+                "an allowed 5xx must be a documented answer"
+            )
     return problems
 
 
-def config_problems(config: Path, ops: dict[str, str]) -> list[str]:
+def config_problems(config: Path, ops: dict[str, set[str]]) -> list[str]:
     """What is wrong with a repo's schemathesis.toml; a missing file is fine."""
     if not config.exists():
         return []

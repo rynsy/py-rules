@@ -161,3 +161,25 @@ def check_pyproject(path: Path) -> Iterator[Finding]:
     for where, rules in _ignore_lists({**ruff, **lint}):
         if any("TID251".startswith(rule) for rule in rules if rule):
             yield Finding(path, 1, 0, "RYP004", f"[tool.ruff] {where} {BAN_EXEMPTION_MESSAGE}")
+
+
+NESTED_CONFIG_MESSAGE = (
+    "a ruff config file beside pyproject.toml can extend-ignore the shared rules where nobody looks; "
+    "keep ruff settings in pyproject.toml, where RYP004 checks them"
+)
+
+
+def nested_ruff_configs() -> list[Finding]:
+    git = shutil.which("git")
+    if git is None:
+        return []
+    listed = subprocess.run(
+        [git, "ls-files", "-z", "--", "*ruff.toml", "ruff.toml", ".ruff.toml"],
+        capture_output=True,
+        check=False,
+    ).stdout.decode()
+    return [
+        Finding(Path(name), 1, 0, "RYP005", NESTED_CONFIG_MESSAGE)
+        for name in sorted(set(filter(None, listed.split("\0"))))
+        if Path(name).name in {"ruff.toml", ".ruff.toml"}
+    ]

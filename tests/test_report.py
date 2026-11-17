@@ -115,10 +115,13 @@ def test_a_setup_problem_fails_an_otherwise_green_run(tmp_path: Path) -> None:
     assert "- operationId op is used twice" in text
 
 
+DECLARED = {"startSync": {"202", "422", "502"}, "listItems": {"200"}}
+
+
 def config(tmp_path: Path, text: str) -> list[str]:
     path = tmp_path / "schemathesis.toml"
     path.write_text(text, encoding="utf-8")
-    return config_problems(path, OPS)
+    return config_problems(path, DECLARED)
 
 
 ALLOWANCE = """
@@ -130,7 +133,7 @@ checks.not_a_server_error.expected-statuses = ["2xx", "3xx", "4xx", "502"]
 
 def test_a_named_502_allowance_is_fine(tmp_path: Path) -> None:
     assert config(tmp_path, ALLOWANCE) == []
-    assert config_problems(tmp_path / "absent.toml", OPS) == []
+    assert config_problems(tmp_path / "absent.toml", DECLARED) == []
 
 
 @pytest.mark.parametrize(
@@ -141,6 +144,8 @@ def test_a_named_502_allowance_is_fine(tmp_path: Path) -> None:
         (ALLOWANCE.replace('"502"', '"5xx"'), "may not include 5xx"),
         (ALLOWANCE.replace('"502"', '"500"'), "may not include 500"),
         (ALLOWANCE.replace("startSync", "nope"), "nope is not an operationId"),
+        (ALLOWANCE.replace("startSync", "listItems"), "listItems does not declare 502"),
+        (ALLOWANCE.replace('"502"', '"503"'), "startSync does not declare 503"),
         (
             ALLOWANCE.replace('include-operation-id = ["startSync"]', 'include-path = "/v1/sync"'),
             "may only hold",
