@@ -1,6 +1,6 @@
 [project]
 name = "rynsy-py-rules"
-version = "0.4.0"
+version = "0.5.0"
 description = "Shared Python lint rules: corrections become deterministic checks"
 requires-python = ">=3.13"
 dependencies = []
@@ -29,6 +29,7 @@ src = ["src", "tests"]
 [tool.ruff.lint.extend-per-file-ignores]
 "tests/test_consumer.py" = ["S603"]
 "src/rynsy_rules/report.py" = ["S314"]
+"src/rynsy_rules/runs.py" = ["S314", "S603"]
 "src/rynsy_rules/comments.py" = ["S603"]
 "tests/test_comments.py" = ["S603", "S607"]
 

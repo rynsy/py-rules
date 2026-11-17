@@ -3,7 +3,8 @@ from pathlib import Path
 
 import pytest
 
-from rynsy_rules.comments import check_paths, check_pyproject, check_source
+from rynsy_rules.cli import main
+from rynsy_rules.comments import check_paths, check_pyproject, check_source, nested_ruff_configs
 
 
 def rules(source: str) -> list[str]:
@@ -98,3 +99,19 @@ def test_inside_a_git_repo_ignored_files_are_skipped(tmp_path: Path) -> None:
     (tmp_path / "mutants" / "copy.py").write_text("# generated\n", encoding="utf-8")
     (tmp_path / "mine.py").write_text("# mine\n", encoding="utf-8")
     assert [f.path.name for f in check_paths([tmp_path])] == ["mine.py"]
+
+
+def test_a_committed_nested_ruff_config_is_ryp005(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    (tmp_path / "src" / "pkg").mkdir(parents=True)
+    (tmp_path / "src" / "pkg" / "ruff.toml").write_text('lint.extend-ignore = ["TID251"]\n', encoding="utf-8")
+    (tmp_path / ".ruff.toml").write_text("\n", encoding="utf-8")
+    (tmp_path / "not-ruff.toml").write_text("\n", encoding="utf-8")
+    (tmp_path / "ok.py").write_text("X = 1\n", encoding="utf-8")
+    subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True)
+    monkeypatch.chdir(tmp_path)
+    assert [f"{f.rule} {f.path}" for f in nested_ruff_configs()] == [
+        "RYP005 .ruff.toml",
+        "RYP005 src/pkg/ruff.toml",
+    ]
+    assert main(["check", "ok.py"]) == 1

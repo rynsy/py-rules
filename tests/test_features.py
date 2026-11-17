@@ -85,7 +85,7 @@ def repo(tmp_path: Path) -> Path:
 
 def run(repo: Path, features: list[dict[str, object]]) -> list[str]:
     (repo / "features.json").write_text(json.dumps(features), encoding="utf-8")
-    return list(problems(repo, repo / "openapi.json", repo / "features.json"))
+    return list(problems(repo, repo / "openapi.json", repo / "features.json", run_proofs=False))
 
 
 def feature(operations: list[str], proven_by: list[str]) -> dict[str, object]:

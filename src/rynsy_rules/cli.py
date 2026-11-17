@@ -4,7 +4,7 @@ from importlib.resources import files
 from pathlib import Path
 
 from rynsy_rules import features, report
-from rynsy_rules.comments import check_paths, check_pyproject
+from rynsy_rules.comments import check_paths, check_pyproject, nested_ruff_configs
 
 CONFIG = Path(".ruff-rynsy.toml")
 
@@ -36,7 +36,7 @@ def write_report(args: argparse.Namespace) -> int:
         required_smoke=tuple(args.require_smoke),
         setup_problems=(
             *spec_problems,
-            *report.config_problems(args.schemathesis_config, ops),
+            *report.config_problems(args.schemathesis_config, features.declared_statuses(args.openapi)),
         ),
     )
     args.out.write_text(text, encoding="utf-8")
@@ -93,6 +93,7 @@ def main(argv: list[str] | None = None) -> int:
     pyproject = Path("pyproject.toml")
     if pyproject.is_file():
         findings.extend(check_pyproject(pyproject))
+    findings.extend(nested_ruff_configs())
     for finding in findings:
         sys.stdout.write(f"{finding}\n")
     return 1 if findings else 0

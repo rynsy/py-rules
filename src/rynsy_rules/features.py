@@ -5,6 +5,8 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import TypedDict
 
+from rynsy_rules import runs
+
 
 class Feature(TypedDict):
     name: str
@@ -124,7 +126,18 @@ def proof_problem(root: Path, node_id: str) -> str | None:
     return f"{node_id}: {verdict}" if verdict else None
 
 
-def problems(root: Path, openapi: Path, features_path: Path) -> Iterator[str]:
+def declared_statuses(openapi: Path) -> dict[str, set[str]]:
+    """Map each operationId to the response status codes it declares."""
+    doc = json.loads(openapi.read_text(encoding="utf-8"))
+    return {
+        op["operationId"]: {str(code) for code in op.get("responses", {})}
+        for ops in doc["paths"].values()
+        for method, op in ops.items()
+        if method in HTTP_METHODS and "operationId" in op
+    }
+
+
+def problems(root: Path, openapi: Path, features_path: Path, *, run_proofs: bool = True) -> Iterator[str]:
     ops, wrong = operations(openapi)
     yield from wrong
     features = load_features(features_path)
@@ -141,3 +154,21 @@ def problems(root: Path, openapi: Path, features_path: Path) -> Iterator[str]:
             problem = proof_problem(root, node_id)
             if problem:
                 yield f"feature '{feature['name']}': {problem}"
+    if run_proofs:
+        yield from _run_problems(root, features)
+
+
+def _run_problems(root: Path, features: list[Feature]) -> Iterator[str]:
+    runnable = sorted(
+        {
+            node_id
+            for feature in features
+            for node_id in feature["provenBy"]
+            if not proof_problem(root, node_id)
+        }
+    )
+    failed = runs.unpassed(root, runnable)
+    for feature in features:
+        for node_id in feature["provenBy"]:
+            if node_id in failed:
+                yield f"feature '{feature['name']}': {node_id}: {failed[node_id]}"
